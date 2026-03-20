@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from telethon import TelegramClient
 
 DEFAULT_DOWNLOAD_DIR = "."
-DEFAULT_SESSION = "tg-app-session"
+DEFAULT_SESSION = "telegram-auto-session"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -79,11 +79,21 @@ def load_proxy_from_env() -> tuple[str, str, int] | None:
     return None
 
 
-def load_credentials() -> tuple[int, str, str]:
+def load_session_name() -> str:
+    load_local_env()
+    return os.environ.get("TG_SESSION", DEFAULT_SESSION).strip() or DEFAULT_SESSION
+
+
+def load_api_credentials() -> tuple[int, str]:
     load_local_env()
     api_id = int(require_env("TG_API_ID"))
     api_hash = require_env("TG_API_HASH")
-    session = os.environ.get("TG_SESSION", DEFAULT_SESSION).strip() or DEFAULT_SESSION
+    return api_id, api_hash
+
+
+def load_credentials() -> tuple[int, str, str]:
+    api_id, api_hash = load_api_credentials()
+    session = load_session_name()
     return api_id, api_hash, session
 
 
@@ -93,6 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Telegram automation CLI with JSON-first output.",
     )
     resources = parser.add_subparsers(dest="resource", required=True)
+
+    auth = resources.add_parser("auth", help="Authentication commands")
+    auth_sub = auth.add_subparsers(dest="action", required=True)
+    auth_sub.add_parser("login", help="Login interactively and persist session")
+    auth_sub.add_parser("logout", help="Logout and invalidate the current session")
+    auth_sub.add_parser(
+        "status", help="Check whether the current session is authorized"
+    )
 
     dialogs = resources.add_parser("dialogs", help="Dialog discovery commands")
     dialogs_sub = dialogs.add_subparsers(dest="action", required=True)
@@ -330,6 +348,118 @@ def serialize_click_result(result: object) -> dict[str, object]:
     return {"kind": type(result).__name__}
 
 
+def build_client(api_id: int, api_hash: str, session: str) -> TelegramClient:
+    proxy = load_proxy_from_env()
+    client_kwargs = {"proxy": proxy} if proxy else {}
+    return TelegramClient(session, api_id, api_hash, **client_kwargs)
+
+
+def get_session_file_paths(session: str) -> list[Path]:
+    session_file = Path(f"{session}.session").resolve()
+    return [session_file, session_file.with_name(f"{session}.session-journal")]
+
+
+async def require_authorized(client: TelegramClient) -> None:
+    if not await client.is_user_authorized():
+        raise RuntimeError(
+            "Session is not authorized. Run 'telegram-auto auth login' first."
+        )
+
+
+async def auth_status(client: TelegramClient, session: str) -> dict[str, object]:
+    session_paths = get_session_file_paths(session)
+    session_file = session_paths[0]
+    session_exists = session_file.exists()
+    if not session_exists:
+        return {
+            "authorized": False,
+            "session": session,
+            "session_file": str(session_file),
+            "session_file_exists": False,
+            "interactive_required": True,
+            "recommended_command": "telegram-auto auth login",
+            "account": None,
+        }
+
+    authorized = await client.is_user_authorized()
+    me = await client.get_me() if authorized else None
+    return {
+        "authorized": authorized,
+        "session": session,
+        "session_file": str(session_file),
+        "session_file_exists": True,
+        "interactive_required": not authorized,
+        "recommended_command": None if authorized else "telegram-auto auth login",
+        "account": serialize_entity(me),
+    }
+
+
+async def auth_login(
+    client: TelegramClient, session: str
+) -> tuple[dict[str, object], dict[str, object]]:
+    if await client.is_user_authorized():
+        me = await client.get_me()
+        account = serialize_entity(me)
+        return (
+            {
+                "authorized": True,
+                "already_authorized": True,
+                "session": session,
+                "session_file": str(Path(f"{session}.session").resolve()),
+                "interactive_required": False,
+            },
+            account or {},
+        )
+
+    await client.start()
+    me = await client.get_me()
+    account = serialize_entity(me)
+    return (
+        {
+            "authorized": True,
+            "already_authorized": False,
+            "session": session,
+            "session_file": str(Path(f"{session}.session").resolve()),
+            "interactive_required": True,
+        },
+        account or {},
+    )
+
+
+async def auth_logout(client: TelegramClient | None, session: str) -> dict[str, object]:
+    remote_revoked = False
+    remote_logout_error: dict[str, str] | None = None
+
+    if client is not None:
+        try:
+            if await client.is_user_authorized():
+                await client.log_out()
+                remote_revoked = True
+        except Exception as exc:
+            remote_logout_error = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+
+    deleted_files: list[str] = []
+    session_file = None
+    for path in get_session_file_paths(session):
+        if session_file is None:
+            session_file = path
+        if path.exists():
+            path.unlink()
+            deleted_files.append(str(path))
+
+    payload: dict[str, object] = {
+        "session": session,
+        "remote_revoked": remote_revoked,
+        "local_cleared": remote_revoked or bool(deleted_files) or not session_file,
+    }
+    if remote_logout_error is not None:
+        payload["error"] = remote_logout_error
+    return payload
+
+
 async def list_dialogs(client: TelegramClient, limit: int) -> dict[str, object]:
     dialogs: list[dict[str, object]] = []
     async for dialog in client.iter_dialogs(limit=limit):
@@ -452,11 +582,38 @@ async def forward_message(
 
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
-    api_id, api_hash, session = load_credentials()
-    proxy = load_proxy_from_env()
-    client_kwargs = {"proxy": proxy} if proxy else {}
+    session = load_session_name()
+    api_id, api_hash = load_api_credentials()
+    if args.resource == "auth" and args.action == "status":
+        session_file = get_session_file_paths(session)[0]
+        if not session_file.exists():
+            return ok(
+                "auth.status",
+                {
+                    "authorized": False,
+                    "session": session,
+                    "session_file": str(session_file),
+                    "session_file_exists": False,
+                    "interactive_required": True,
+                    "recommended_command": "telegram-auto auth login",
+                    "account": None,
+                },
+            )
 
-    async with TelegramClient(session, api_id, api_hash, **client_kwargs) as client:
+    client = build_client(api_id, api_hash, session)
+    await client.connect()
+    try:
+        if args.resource == "auth" and args.action == "status":
+            return ok("auth.status", await auth_status(client, session))
+
+        if args.resource == "auth" and args.action == "login":
+            data, account = await auth_login(client, session)
+            return ok("auth.login", data, account)
+
+        if args.resource == "auth" and args.action == "logout":
+            return ok("auth.logout", await auth_logout(client, session))
+
+        await require_authorized(client)
         me = await client.get_me()
         account = serialize_entity(me)
 
@@ -515,6 +672,8 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             )
 
         raise ValueError(f"Unsupported command: {args.resource}.{args.action}")
+    finally:
+        await client.disconnect()
 
 
 def main() -> None:

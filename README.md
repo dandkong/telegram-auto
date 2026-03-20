@@ -6,6 +6,7 @@
 
 当前已支持以下能力：
 
+- 登录、登出与会话状态检查
 - 列出最近会话
 - 列出指定聊天的消息
 - 发送消息
@@ -48,7 +49,7 @@ uv tool upgrade telegram-auto
 
 可选变量：
 
-- `TG_SESSION`：会话名，默认是 `tg-app-session`
+- `TG_SESSION`：会话名，默认是 `telegram-auto-session`
 - `ALL_PROXY`
 - `HTTPS_PROXY`
 - `HTTP_PROXY`
@@ -66,13 +67,19 @@ ALL_PROXY=socks5://127.0.0.1:7890
 ```env
 TG_API_ID=123456
 TG_API_HASH=your_api_hash
-TG_SESSION=tg-app-session
+TG_SESSION=telegram-auto-session
 # ALL_PROXY=socks5://127.0.0.1:7890
 ```
 
-## 首次登录
+## 认证
 
-首次运行任意命令时，程序会要求你完成 Telegram 登录验证，通常包括：
+首次使用时，建议由人工先执行：
+
+```bash
+telegram-auto auth login
+```
+
+认证过程会要求你完成 Telegram 登录验证，通常包括：
 
 - 输入手机号
 - 输入 Telegram 发给你的验证码
@@ -80,7 +87,45 @@ TG_SESSION=tg-app-session
 
 登录成功后，会在本地生成 session 文件，用于后续复用登录状态。
 
+检查当前 session 文件是否存在，以及当前授权状态：
+
+```bash
+telegram-auto auth status
+```
+
+尝试退出当前 Telegram 会话，并清除本地 session 文件：
+
+```bash
+telegram-auto auth logout
+```
+
+对于面向 agent 的使用方式，推荐流程是：
+
+1. 人工首次执行 `telegram-auto auth login`
+2. agent 执行业务命令前可先调用 `telegram-auto auth status`
+3. 如需退出当前会话并清理本地登录态，再执行 `telegram-auto auth logout`
+
 ## 使用示例
+
+### auth
+
+交互式登录：
+
+```bash
+telegram-auto auth login
+```
+
+检查 session 文件和登录状态：
+
+```bash
+telegram-auto auth status
+```
+
+退出当前会话并删除本地 session：
+
+```bash
+telegram-auto auth logout
+```
 
 ### dialogs
 

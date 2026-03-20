@@ -147,6 +147,36 @@ telegram-auto dialogs list --limit 10
 telegram-auto messages list --chat me --limit 5
 ```
 
+从某条消息开始继续向前翻：
+
+```bash
+telegram-auto messages list --chat me --limit 50 --offset-id 123
+```
+
+从某条消息开始继续向后翻：
+
+```bash
+telegram-auto messages list --chat me --limit 50 --offset-id 123 --reverse
+```
+
+查看频道帖子的评论区：
+
+```bash
+telegram-auto messages list --chat some_channel --reply-to 123 --limit 50
+```
+
+在单个聊天里搜索消息：
+
+```bash
+telegram-auto messages search --chat me --query "hello" --limit 20
+```
+
+全局搜索消息：
+
+```bash
+telegram-auto messages search --query "hello" --limit 20
+```
+
 发送消息：
 
 ```bash
@@ -175,6 +205,10 @@ telegram-auto messages forward --chat me --from-chat some_chat --message-id 123
 
 - `--chat`：目标聊天，可使用用户名、`me` 或其他 Telethon 支持的目标标识
 - `--limit`：消息数量，默认 `5`
+- `--offset-id`：消息偏移 ID，默认 `0`
+- `--reverse`：按从旧到新返回消息
+- `--reply-to`：查看某条消息的回复/评论线程，适合频道评论区
+- `--query`：搜索关键词，用于 `messages search`
 - `--text`：发送或回复的文本内容
 - `--message-id`：消息 ID
 - `--from-chat`：转发来源聊天

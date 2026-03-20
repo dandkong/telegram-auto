@@ -20,6 +20,29 @@ def emit_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def compact(value: object) -> object:
+    if isinstance(value, dict):
+        result: dict[object, object] = {}
+        for key, item in value.items():
+            compacted = compact(item)
+            if compacted is None:
+                continue
+            if isinstance(compacted, (list, dict)) and not compacted:
+                continue
+            result[key] = compacted
+        return result
+
+    if isinstance(value, list):
+        result = [compact(item) for item in value]
+        return [
+            item
+            for item in result
+            if item is not None and not (isinstance(item, (list, dict)) and not item)
+        ]
+
+    return value
+
+
 def ok(
     command: str, data: object, account: dict[str, object] | None = None
 ) -> dict[str, object]:
@@ -30,17 +53,19 @@ def ok(
     }
     if account is not None:
         payload["account"] = account
-    return payload
+    return compact(payload)
 
 
 def fail(exc: Exception) -> dict[str, object]:
-    return {
-        "ok": False,
-        "error": {
-            "type": type(exc).__name__,
-            "message": str(exc),
-        },
-    }
+    return compact(
+        {
+            "ok": False,
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+    )
 
 
 def load_local_env() -> None:
@@ -122,6 +147,18 @@ def build_parser() -> argparse.ArgumentParser:
     messages_list = messages_sub.add_parser("list", help="List recent messages")
     messages_list.add_argument("--chat", required=True)
     messages_list.add_argument("--limit", type=int, default=5)
+    messages_list.add_argument("--offset-id", type=int, default=0)
+    messages_list.add_argument(
+        "--reverse",
+        action="store_true",
+        help="Return messages from older to newer",
+    )
+    messages_list.add_argument("--reply-to", type=int)
+
+    messages_search = messages_sub.add_parser("search", help="Search messages")
+    messages_search.add_argument("--chat")
+    messages_search.add_argument("--query", required=True)
+    messages_search.add_argument("--limit", type=int, default=20)
 
     messages_send = messages_sub.add_parser("send", help="Send a new message")
     messages_send.add_argument("--chat", required=True)
@@ -177,12 +214,14 @@ def serialize_entity(entity: object | None) -> dict[str, object] | None:
         or username
     )
 
-    return {
-        "id": getattr(entity, "id", None),
-        "username": username,
-        "name": name or None,
-        "type": type(entity).__name__,
-    }
+    return compact(
+        {
+            "id": getattr(entity, "id", None),
+            "username": username,
+            "name": name or None,
+            "type": type(entity).__name__,
+        }
+    )
 
 
 def infer_message_kind(message: object) -> str:
@@ -224,15 +263,17 @@ def serialize_media(message: object) -> dict[str, object] | None:
         return None
 
     file = getattr(message, "file", None)
-    return {
-        "kind": infer_message_kind(message),
-        "file_name": getattr(file, "name", None),
-        "mime_type": getattr(file, "mime_type", None),
-        "size": getattr(file, "size", None),
-        "width": getattr(file, "width", None),
-        "height": getattr(file, "height", None),
-        "duration": getattr(file, "duration", None),
-    }
+    return compact(
+        {
+            "kind": infer_message_kind(message),
+            "file_name": getattr(file, "name", None),
+            "mime_type": getattr(file, "mime_type", None),
+            "size": getattr(file, "size", None),
+            "width": getattr(file, "width", None),
+            "height": getattr(file, "height", None),
+            "duration": getattr(file, "duration", None),
+        }
+    )
 
 
 def serialize_buttons(message: object) -> list[dict[str, object]]:
@@ -255,7 +296,8 @@ def serialize_buttons(message: object) -> list[dict[str, object]]:
                 }
             )
 
-    return items
+    compacted = compact(items)
+    return compacted if isinstance(compacted, list) else []
 
 
 def serialize_forward(message: object) -> dict[str, object] | None:
@@ -265,11 +307,15 @@ def serialize_forward(message: object) -> dict[str, object] | None:
 
     from_id = getattr(forward, "from_id", None)
     from_name = getattr(forward, "from_name", None)
-    return {
-        "from_id": str(from_id) if from_id is not None else None,
-        "from_name": from_name,
-        "date": forward.date.isoformat() if getattr(forward, "date", None) else None,
-    }
+    return compact(
+        {
+            "from_id": str(from_id) if from_id is not None else None,
+            "from_name": from_name,
+            "date": forward.date.isoformat()
+            if getattr(forward, "date", None)
+            else None,
+        }
+    )
 
 
 def serialize_reactions(message: object) -> list[dict[str, object]] | None:
@@ -300,7 +346,7 @@ def serialize_reactions(message: object) -> list[dict[str, object]] | None:
                 str(user_id) for user_id in recent_reactors
             ]
 
-        result.append(reaction_dict)
+        result.append(compact(reaction_dict))
 
     return result if result else None
 
@@ -309,33 +355,37 @@ def serialize_message(
     message: object, chat: str | None = None, sender: object | None = None
 ) -> dict[str, object]:
     date = getattr(message, "date", None)
-    return {
-        "id": getattr(message, "id", None),
-        "chat": chat,
-        "date": date.isoformat() if date else None,
-        "sender": serialize_entity(sender or getattr(message, "sender", None)),
-        "text": getattr(message, "text", None),
-        "kind": infer_message_kind(message),
-        "media": serialize_media(message),
-        "grouped_id": getattr(message, "grouped_id", None),
-        "reply_to_message_id": getattr(message, "reply_to_msg_id", None),
-        "forward": serialize_forward(message),
-        "buttons": serialize_buttons(message),
-        "reactions": serialize_reactions(message),
-    }
+    return compact(
+        {
+            "id": getattr(message, "id", None),
+            "chat": chat,
+            "date": date.isoformat() if date else None,
+            "sender": serialize_entity(sender or getattr(message, "sender", None)),
+            "text": getattr(message, "text", None),
+            "kind": infer_message_kind(message),
+            "media": serialize_media(message),
+            "grouped_id": getattr(message, "grouped_id", None),
+            "reply_to_message_id": getattr(message, "reply_to_msg_id", None),
+            "forward": serialize_forward(message),
+            "buttons": serialize_buttons(message),
+            "reactions": serialize_reactions(message),
+        }
+    )
 
 
 def serialize_dialog(dialog: object) -> dict[str, object]:
     entity = getattr(dialog, "entity", None)
     username = getattr(entity, "username", None)
-    return {
-        "id": getattr(entity, "id", None),
-        "name": getattr(dialog, "name", None),
-        "handle": f"@{username}" if username else None,
-        "type": type(entity).__name__ if entity is not None else None,
-        "unread_count": getattr(dialog, "unread_count", None),
-        "pinned": bool(getattr(dialog, "pinned", False)),
-    }
+    return compact(
+        {
+            "id": getattr(entity, "id", None),
+            "name": getattr(dialog, "name", None),
+            "handle": f"@{username}" if username else None,
+            "type": type(entity).__name__ if entity is not None else None,
+            "unread_count": getattr(dialog, "unread_count", None),
+            "pinned": bool(getattr(dialog, "pinned", False)),
+        }
+    )
 
 
 def serialize_click_result(result: object) -> dict[str, object]:
@@ -345,7 +395,7 @@ def serialize_click_result(result: object) -> dict[str, object]:
         return {"kind": "bool", "value": result}
     if isinstance(result, (str, int, float)):
         return {"kind": type(result).__name__, "value": result}
-    return {"kind": type(result).__name__}
+    return compact({"kind": type(result).__name__})
 
 
 def build_client(api_id: int, api_hash: str, session: str) -> TelegramClient:
@@ -468,13 +518,52 @@ async def list_dialogs(client: TelegramClient, limit: int) -> dict[str, object]:
 
 
 async def list_messages(
-    client: TelegramClient, chat: str, limit: int
+    client: TelegramClient,
+    chat: str,
+    limit: int,
+    offset_id: int = 0,
+    reverse: bool = False,
+    reply_to: int | None = None,
 ) -> dict[str, object]:
     messages: list[dict[str, object]] = []
-    async for message in client.iter_messages(chat, limit=limit):
+    iter_kwargs: dict[str, object] = {
+        "limit": limit,
+        "offset_id": offset_id,
+        "reverse": reverse,
+    }
+    if reply_to is not None:
+        iter_kwargs["reply_to"] = reply_to
+
+    async for message in client.iter_messages(chat, **iter_kwargs):
         sender = await message.get_sender()
         messages.append(serialize_message(message, chat=chat, sender=sender))
-    return {"chat": chat, "limit": limit, "messages": messages}
+    return {
+        "chat": chat,
+        "limit": limit,
+        "offset_id": offset_id,
+        "reverse": reverse,
+        "reply_to": reply_to,
+        "messages": messages,
+    }
+
+
+async def search_messages(
+    client: TelegramClient,
+    query: str,
+    limit: int,
+    chat: str | None = None,
+) -> dict[str, object]:
+    messages: list[dict[str, object]] = []
+    async for message in client.iter_messages(chat, limit=limit, search=query):
+        sender = await message.get_sender()
+        messages.append(serialize_message(message, chat=chat, sender=sender))
+    return {
+        "chat": chat,
+        "query": query,
+        "limit": limit,
+        "scope": "chat" if chat else "global",
+        "messages": messages,
+    }
 
 
 async def send_message(
@@ -623,7 +712,21 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         if args.resource == "messages" and args.action == "list":
             return ok(
                 "messages.list",
-                await list_messages(client, args.chat, args.limit),
+                await list_messages(
+                    client,
+                    args.chat,
+                    args.limit,
+                    args.offset_id,
+                    args.reverse,
+                    args.reply_to,
+                ),
+                account,
+            )
+
+        if args.resource == "messages" and args.action == "search":
+            return ok(
+                "messages.search",
+                await search_messages(client, args.query, args.limit, args.chat),
                 account,
             )
 

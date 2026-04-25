@@ -231,7 +231,7 @@ telegram-auto buttons click --chat some_chat --message-id 123 --text "确认"
 
 ### media
 
-下载媒体文件：
+下载媒体文件（下载到目录，由 Telethon 自动命名）：
 
 ```bash
 telegram-auto media download --chat some_chat --message-id 123
@@ -240,14 +240,20 @@ telegram-auto media download --chat some_chat --message-id 123
 指定下载目录：
 
 ```bash
-telegram-auto media download --chat some_chat --message-id 123 --out ./downloads
+telegram-auto media download --chat some_chat --message-id 123 --dir ./downloads
+```
+
+下载到指定文件路径：
+
+```bash
+telegram-auto media download --chat some_chat --message-id 123 --file ./output/photo.jpg
 ```
 
 说明：
 
-- 不传 `--out` 时，默认下载到当前执行命令的目录
-- 不是下载到可执行文件所在目录，而是下载到当前工作目录
-- `--out` 支持相对路径和绝对路径
+- `--dir`：下载到目录，文件名由 Telethon 根据媒体信息自动确定，默认为当前工作目录
+- `--file`：下载到指定的精确文件路径，父目录不存在时会自动创建
+- 同时传入 `--dir` 和 `--file` 时，`--file` 优先
 
 ## 输出格式
 

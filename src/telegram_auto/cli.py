@@ -195,7 +195,16 @@ def build_parser() -> argparse.ArgumentParser:
     media_download = media_sub.add_parser("download", help="Download message media")
     media_download.add_argument("--chat", required=True)
     media_download.add_argument("--message-id", required=True, type=int)
-    media_download.add_argument("--out", default=DEFAULT_DOWNLOAD_DIR)
+    media_download.add_argument(
+        "--dir",
+        default=DEFAULT_DOWNLOAD_DIR,
+        help="Download to a directory; Telethon auto-names the file",
+    )
+    media_download.add_argument(
+        "--file",
+        default=None,
+        help="Download to an exact file path",
+    )
 
     return parser
 
@@ -615,7 +624,11 @@ async def click_button(
 
 
 async def download_media(
-    client: TelegramClient, chat: str, message_id: int, out_dir: str
+    client: TelegramClient,
+    chat: str,
+    message_id: int,
+    out_dir: str,
+    out_file: str | None = None,
 ) -> dict[str, object]:
     message = await client.get_messages(chat, ids=message_id)
     if not message:
@@ -623,9 +636,17 @@ async def download_media(
     if not message.media:
         raise ValueError(f"Message {message_id} has no media to download")
 
-    output_dir = Path(out_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    downloaded = await message.download_media(file=str(output_dir) + os.sep)
+    if out_file is not None:
+        # --file mode: save to exact path
+        target = Path(out_file)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        downloaded = await message.download_media(file=str(target))
+    else:
+        # --dir mode: download to directory, auto-named by Telethon
+        output_dir = Path(out_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        downloaded = await message.download_media(file=str(output_dir) + os.sep)
+
     if not downloaded:
         raise RuntimeError("Media download failed")
 
@@ -633,6 +654,7 @@ async def download_media(
     return {
         "chat": chat,
         "message_id": message_id,
+        "mode": "file" if out_file is not None else "dir",
         "path": downloaded,
         "message": serialize_message(message, chat=chat, sender=sender),
     }
@@ -770,7 +792,9 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         if args.resource == "media" and args.action == "download":
             return ok(
                 "media.download",
-                await download_media(client, args.chat, args.message_id, args.out),
+                await download_media(
+                    client, args.chat, args.message_id, args.dir, args.file
+                ),
                 account,
             )
 

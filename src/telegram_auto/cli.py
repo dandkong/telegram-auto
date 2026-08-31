@@ -155,6 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     messages_list.add_argument("--reply-to", type=int)
 
+    messages_get = messages_sub.add_parser(
+        "get", help="Get one message by ID"
+    )
+    messages_get.add_argument("--chat", required=True)
+    messages_get.add_argument("--message-id", required=True, type=int)
+
     messages_search = messages_sub.add_parser("search", help="Search messages")
     messages_search.add_argument("--chat")
     messages_search.add_argument("--query", required=True)
@@ -556,6 +562,21 @@ async def list_messages(
     }
 
 
+async def get_message(
+    client: TelegramClient, chat: str, message_id: int
+) -> dict[str, object]:
+    message = await client.get_messages(chat, ids=message_id)
+    if not message:
+        raise ValueError(f"Message {message_id} not found in chat '{chat}'")
+
+    sender = await message.get_sender()
+    return {
+        "chat": chat,
+        "message_id": message_id,
+        "message": serialize_message(message, chat=chat, sender=sender),
+    }
+
+
 async def search_messages(
     client: TelegramClient,
     query: str,
@@ -742,6 +763,13 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     args.reverse,
                     args.reply_to,
                 ),
+                account,
+            )
+
+        if args.resource == "messages" and args.action == "get":
+            return ok(
+                "messages.get",
+                await get_message(client, args.chat, args.message_id),
                 account,
             )
 

@@ -9,6 +9,7 @@
 - 登录、登出与会话状态检查
 - 列出最近会话
 - 列出指定聊天的消息
+- 按消息 ID 读取单条消息
 - 发送消息
 - 回复指定消息
 - 发送本地文件
@@ -163,6 +164,12 @@ telegram-auto messages list --chat me --limit 50 --offset-id 123 --reverse
 
 ```bash
 telegram-auto messages list --chat some_channel --reply-to 123 --limit 50
+```
+
+按消息 ID 读取单条消息：
+
+```bash
+telegram-auto messages get --chat some_channel --message-id 123
 ```
 
 在单个聊天里搜索消息：

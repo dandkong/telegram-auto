@@ -8,8 +8,10 @@
 
 - 登录、登出与会话状态检查
 - 列出最近会话
+- 删除整个聊天对话
 - 列出指定聊天的消息
 - 按消息 ID 读取单条消息
+- 删除消息
 - 发送消息
 - 回复指定消息
 - 发送本地文件
@@ -140,6 +142,12 @@ telegram-auto dialogs list --limit 10
 
 - `--limit`：返回的会话数量，默认 `20`
 
+删除整个聊天对话（同时删除双方的对话历史；不可逆）：
+
+```bash
+telegram-auto dialogs delete --chat jisou
+```
+
 ### messages
 
 列出消息：
@@ -170,6 +178,18 @@ telegram-auto messages list --chat some_channel --reply-to 123 --limit 50
 
 ```bash
 telegram-auto messages get --chat some_channel --message-id 123
+```
+
+删除消息（默认同时为双方删除；不可逆）：
+
+```bash
+telegram-auto messages delete --chat me --message-id 66003
+```
+
+批量删除时重复传入 `--message-id`：
+
+```bash
+telegram-auto messages delete --chat me --message-id 66003 --message-id 66004
 ```
 
 在单个聊天里搜索消息：

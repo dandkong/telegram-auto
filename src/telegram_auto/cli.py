@@ -142,6 +142,9 @@ def build_parser() -> argparse.ArgumentParser:
     dialogs_list = dialogs_sub.add_parser("list", help="List recent dialogs")
     dialogs_list.add_argument("--limit", type=int, default=20)
 
+    dialogs_delete = dialogs_sub.add_parser("delete", help="Delete a dialog")
+    dialogs_delete.add_argument("--chat", required=True)
+
     messages = resources.add_parser("messages", help="Message commands")
     messages_sub = messages.add_subparsers(dest="action", required=True)
     messages_list = messages_sub.add_parser("list", help="List recent messages")
@@ -160,6 +163,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     messages_get.add_argument("--chat", required=True)
     messages_get.add_argument("--message-id", required=True, type=int)
+
+    messages_delete = messages_sub.add_parser("delete", help="Delete messages")
+    messages_delete.add_argument("--chat", required=True)
+    messages_delete.add_argument(
+        "--message-id",
+        dest="message_ids",
+        required=True,
+        type=int,
+        action="append",
+        help="Message ID; repeat this option for multiple messages",
+    )
 
     messages_search = messages_sub.add_parser("search", help="Search messages")
     messages_search.add_argument("--chat")
@@ -577,6 +591,29 @@ async def get_message(
     }
 
 
+async def delete_messages(
+    client: TelegramClient, chat: str, message_ids: list[int]
+) -> dict[str, object]:
+    if not message_ids:
+        raise ValueError("At least one message ID is required")
+
+    await client.delete_messages(chat, message_ids, revoke=True)
+    return {
+        "chat": chat,
+        "deleted_ids": message_ids,
+        "for_everyone": True,
+    }
+
+
+async def delete_dialog(client: TelegramClient, chat: str) -> dict[str, object]:
+    await client.delete_dialog(chat, revoke=True)
+    return {
+        "chat": chat,
+        "deleted": True,
+        "for_everyone": True,
+    }
+
+
 async def search_messages(
     client: TelegramClient,
     query: str,
@@ -752,6 +789,13 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         if args.resource == "dialogs" and args.action == "list":
             return ok("dialogs.list", await list_dialogs(client, args.limit), account)
 
+        if args.resource == "dialogs" and args.action == "delete":
+            return ok(
+                "dialogs.delete",
+                await delete_dialog(client, args.chat),
+                account,
+            )
+
         if args.resource == "messages" and args.action == "list":
             return ok(
                 "messages.list",
@@ -770,6 +814,13 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             return ok(
                 "messages.get",
                 await get_message(client, args.chat, args.message_id),
+                account,
+            )
+
+        if args.resource == "messages" and args.action == "delete":
+            return ok(
+                "messages.delete",
+                await delete_messages(client, args.chat, args.message_ids),
                 account,
             )
 

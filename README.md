@@ -138,14 +138,21 @@ telegram-auto auth logout
 telegram-auto dialogs list --limit 10
 ```
 
+只列出有未读消息的对话：
+
+```bash
+telegram-auto dialogs list --limit 20 --unread-only
+```
+
 参数：
 
 - `--limit`：返回的会话数量，默认 `20`
+- `--unread-only`：只返回有未读消息的对话
 
 删除整个聊天对话（同时删除双方的对话历史；不可逆）：
 
 ```bash
-telegram-auto dialogs delete --chat jisou
+telegram-auto dialogs delete --chat some_chat
 ```
 
 ### messages
@@ -183,13 +190,25 @@ telegram-auto messages get --chat some_channel --message-id 123
 删除消息（默认同时为双方删除；不可逆）：
 
 ```bash
-telegram-auto messages delete --chat me --message-id 66003
+telegram-auto messages delete --chat some_chat --message-id 123
 ```
 
 批量删除时重复传入 `--message-id`：
 
 ```bash
-telegram-auto messages delete --chat me --message-id 66003 --message-id 66004
+telegram-auto messages delete --chat some_chat --message-id 123 --message-id 124
+```
+
+读取指定聊天的未读消息：
+
+```bash
+telegram-auto messages unread --chat some_chat --limit 100
+```
+
+返回的 `snapshot_max_id` 是本次读取到的截止消息 ID，可用于后续标记已读：
+
+```bash
+telegram-auto messages mark-read --chat some_chat --max-id 12345
 ```
 
 在单个聊天里搜索消息：
@@ -255,6 +274,8 @@ telegram-auto buttons click --chat some_chat --message-id 123 --text "确认"
 - `--chat`：消息所在聊天
 - `--message-id`：目标消息 ID
 - `--text`：按钮文字
+
+按钮点击返回值会包含机器人回调结果，例如提示文本、是否弹窗、跳转 URL 和缓存时间。
 
 ### media
 

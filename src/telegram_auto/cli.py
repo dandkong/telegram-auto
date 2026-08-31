@@ -141,6 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     dialogs_sub = dialogs.add_subparsers(dest="action", required=True)
     dialogs_list = dialogs_sub.add_parser("list", help="List recent dialogs")
     dialogs_list.add_argument("--limit", type=int, default=20)
+    dialogs_list.add_argument(
+        "--unread-only",
+        action="store_true",
+        help="Only return dialogs with unread messages",
+    )
 
     dialogs_delete = dialogs_sub.add_parser("delete", help="Delete a dialog")
     dialogs_delete.add_argument("--chat", required=True)
@@ -174,6 +179,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="Message ID; repeat this option for multiple messages",
     )
+
+    messages_unread = messages_sub.add_parser(
+        "unread", help="List unread messages"
+    )
+    messages_unread.add_argument("--chat", required=True)
+    messages_unread.add_argument("--limit", type=int, default=100)
+
+    messages_mark_read = messages_sub.add_parser(
+        "mark-read", help="Mark messages as read through an ID"
+    )
+    messages_mark_read.add_argument("--chat", required=True)
+    messages_mark_read.add_argument("--max-id", required=True, type=int)
 
     messages_search = messages_sub.add_parser("search", help="Search messages")
     messages_search.add_argument("--chat")
@@ -412,6 +429,7 @@ def serialize_dialog(dialog: object) -> dict[str, object]:
             "handle": f"@{username}" if username else None,
             "type": type(entity).__name__ if entity is not None else None,
             "unread_count": getattr(dialog, "unread_count", None),
+            "archived": getattr(dialog, "archived", None),
             "pinned": bool(getattr(dialog, "pinned", False)),
         }
     )
@@ -424,7 +442,16 @@ def serialize_click_result(result: object) -> dict[str, object]:
         return {"kind": "bool", "value": result}
     if isinstance(result, (str, int, float)):
         return {"kind": type(result).__name__, "value": result}
-    return compact({"kind": type(result).__name__})
+
+    return compact(
+        {
+            "kind": type(result).__name__,
+            "message": getattr(result, "message", None),
+            "alert": getattr(result, "alert", None),
+            "url": getattr(result, "url", None),
+            "cache_time": getattr(result, "cache_time", None),
+        }
+    )
 
 
 def build_client(api_id: int, api_hash: str, session: str) -> TelegramClient:
@@ -539,11 +566,80 @@ async def auth_logout(client: TelegramClient | None, session: str) -> dict[str, 
     return payload
 
 
-async def list_dialogs(client: TelegramClient, limit: int) -> dict[str, object]:
+async def list_dialogs(
+    client: TelegramClient, limit: int, unread_only: bool = False
+) -> dict[str, object]:
+    if limit < 1:
+        raise ValueError("limit must be greater than zero")
+
     dialogs: list[dict[str, object]] = []
-    async for dialog in client.iter_dialogs(limit=limit):
-        dialogs.append(serialize_dialog(dialog))
-    return {"limit": limit, "dialogs": dialogs}
+    dialog_limit = None if unread_only else limit
+    async for dialog in client.iter_dialogs(limit=dialog_limit):
+        serialized = serialize_dialog(dialog)
+        if unread_only and not (serialized.get("unread_count") or 0):
+            continue
+        dialogs.append(serialized)
+        if len(dialogs) >= limit:
+            break
+    return {"limit": limit, "unread_only": unread_only, "dialogs": dialogs}
+
+
+async def find_dialog(client: TelegramClient, chat: str) -> object:
+    target_id = await client.get_peer_id(chat)
+    async for dialog in client.iter_dialogs():
+        if getattr(dialog, "id", None) == target_id:
+            return dialog
+    raise ValueError(f"Chat '{chat}' is not in the dialog list")
+
+
+async def list_unread_messages(
+    client: TelegramClient, chat: str, limit: int
+) -> dict[str, object]:
+    if limit < 1:
+        raise ValueError("limit must be greater than zero")
+
+    dialog = await find_dialog(client, chat)
+    unread_count = getattr(dialog, "unread_count", 0) or 0
+    raw_dialog = getattr(dialog, "dialog", None)
+    read_inbox_max_id = getattr(raw_dialog, "read_inbox_max_id", 0) or 0
+
+    messages: list[dict[str, object]] = []
+    async for message in client.iter_messages(
+        chat, min_id=read_inbox_max_id, limit=limit + 1, reverse=True
+    ):
+        sender = await message.get_sender()
+        messages.append(serialize_message(message, chat=chat, sender=sender))
+
+    has_more = len(messages) > limit
+    if has_more:
+        messages = messages[:limit]
+
+    message_ids = [item["id"] for item in messages if item.get("id") is not None]
+    snapshot_max_id = max(message_ids, default=read_inbox_max_id)
+    return {
+        "chat": chat,
+        "unread_count": unread_count,
+        "snapshot_max_id": snapshot_max_id,
+        "has_more": has_more,
+        "limit": limit,
+        "messages": messages,
+    }
+
+
+async def mark_read(
+    client: TelegramClient, chat: str, max_id: int
+) -> dict[str, object]:
+    if max_id < 1:
+        raise ValueError("max_id must be greater than zero")
+
+    dialog = await find_dialog(client, chat)
+    previous_unread_count = getattr(dialog, "unread_count", 0) or 0
+    await client.send_read_acknowledge(chat, max_id=max_id)
+    return {
+        "chat": chat,
+        "marked_read_through": max_id,
+        "previous_unread_count": previous_unread_count,
+    }
 
 
 async def list_messages(
@@ -787,7 +883,11 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         account = serialize_entity(me)
 
         if args.resource == "dialogs" and args.action == "list":
-            return ok("dialogs.list", await list_dialogs(client, args.limit), account)
+            return ok(
+                "dialogs.list",
+                await list_dialogs(client, args.limit, args.unread_only),
+                account,
+            )
 
         if args.resource == "dialogs" and args.action == "delete":
             return ok(
@@ -821,6 +921,20 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             return ok(
                 "messages.delete",
                 await delete_messages(client, args.chat, args.message_ids),
+                account,
+            )
+
+        if args.resource == "messages" and args.action == "unread":
+            return ok(
+                "messages.unread",
+                await list_unread_messages(client, args.chat, args.limit),
+                account,
+            )
+
+        if args.resource == "messages" and args.action == "mark-read":
+            return ok(
+                "messages.mark-read",
+                await mark_read(client, args.chat, args.max_id),
                 account,
             )
 
